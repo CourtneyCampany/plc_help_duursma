@@ -1,13 +1,13 @@
 ## laselva vulnerability curve format
-library(plyr)
+library(dplyr)
+library(stringr)
 
 ## read in datasheet with flow parameters
 
-laselva_times <- read.csv("vcurve_raw_data/laselva/vcurve_times_laselva.csv")
-  laselva_times$water_potential <- round(laselva_times$water_potential,1)
-  laselva_times$sample_id <- with(laselva_times,
-                                  paste(species, individual, 
-                                  format(water_potential,digits=1), sep="_"))
+laselva_times <- read.csv("vcurve_raw_data/laselva/vcurve_times_laselva.csv") %>% 
+  mutate(water_potential = round(water_potential,1),
+         sample_id = paste(species, individual, 
+                           format(water_potential,digits=1), sep="_"))
 
 
 ##Read in flow meter data files into a list and create unique ID to match times dfr
@@ -15,22 +15,22 @@ laselva_times <- read.csv("vcurve_raw_data/laselva/vcurve_times_laselva.csv")
 #create a list of clean file names that to use latter
 vcurves <- list.files(path="vcurve_raw_data/laselva/",
                       pattern="mpa",full.names=TRUE)
+
 #extract the genusspecies and treatment info
-vcurves_names <- gsub("vcurve_raw_data/laselva/", "", vcurves)
-vcurves_names <- gsub("_mpa.csv", "", vcurves_names)
+vcurves_names <- str_replace(vcurves, "vcurve_raw_data/laselva/", "") %>%
+                 str_replace("_mpa.csv", "")
 
 ##read in all data files from laselva
 #skip first 14 rows from sensirion flow meter csv files
-vcurve_files <- llply(list.files(path="vcurve_raw_data/laselva/",
-                                 pattern="mpa",full.names=TRUE),
-                                 function(filename){
-                                 dat=read.csv(filename, header=TRUE,skip=14)
-                                 })
+# My rule: if you can use lapply instead of something from plyr/dplyr/purrr, use lapply
+# you don't need function(x) because unknown arguments are send to read.csv via ...
+vcurve_data_list <- lapply(vcurves, read.csv, header=TRUE, skip=14)
+# I renamed the object because these are not files, but a list of dataframes
 
 #add new variable with unique ID
-for(i in seq_along(vcurve_files)){
-  vcurve_files[[i]]$sample_id <- vcurves_names[i]
-}
+#(had to do some searching on the most efficient method for this, i have
+# usually used lapply or a loop as well)
+vcurve_data_list <- Map(cbind, vcurve_data_list, sample_id = vcurves_names)
 
 ## function to calculate conductivity from stipe flow rates--------
 vcurve_function <- function(dfr, timesdfr,
@@ -92,14 +92,14 @@ vcurve_function <- function(dfr, timesdfr,
 }
 
 #test function with simple data frames
-testdata <- vcurve_files[[6]]
+testdata <- vcurve_data_list[[6]]
 test1 <- vcurve_function(dfr = testdata, timesdfr = laselva_times)
 
 #test function with larger list
-laselva_cond <- lapply(vcurve_files, function(x) 
-  vcurve_function(x,  timesdfr=laselva_times))
+laselva_cond <- lapply(vcurve_data_list, 
+                       vcurve_function,
+                       timesdfr=laselva_times) %>%
+  dplyr::bind_rows(.)
 
-laselva_cond_genspe <- rbind.fill(laselva_cond)
-
-write.csv(laselva_cond_genspe, "laselva_vcurves.csv", row.names = FALSE)
+write.csv(laselva_cond, "laselva_vcurves.csv", row.names = FALSE)
 
